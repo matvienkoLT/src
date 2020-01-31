@@ -1894,8 +1894,21 @@ bool IDAPython_Init(void)
     //  in static storage whose contents will not change for the duration
     //  of the program's execution"
     static qstring pname = idadir("");
+
+#ifdef PY3
+    static qvector<wchar_t> buf_name;
+    Py_SetProgramName(utf8_wchar_t(&buf_name, pname.begin()));
+#else
     Py_SetProgramName(pname.begin());
-    Py_SetPythonHome(g_idapython_dir);
+#endif
+
+#ifdef PY3
+    static qvector<wchar_t> buf;
+    Py_SetPythonHome(utf8_wchar_t(&buf, g_idapython_dir));
+#else
+      Py_SetPythonHome(g_idapython_dir);
+#endif
+
   }
 
   // don't import "site" right now

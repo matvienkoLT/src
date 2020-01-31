@@ -630,6 +630,19 @@ static int pyvar_to_idcvar2(
   return CIP_OK;
 }
 
+//-------------------------------------------------------------------------
+// Converts a Python variable into an IDC variable
+// This function returns on one CIP_XXXX
+static int pyvar_to_idcvar1(
+        const ref_t &py_var,
+        idc_value_t *idc_var,
+        int *gvar_sn,
+        qvector<const PyObject *> &_visited)
+{
+  qvector<const PyObject *> visited = _visited;
+  return pyvar_to_idcvar2(py_var, idc_var, gvar_sn, visited);
+}
+
 // Converts a Python variable into an IDC variable
 // This function returns on one CIP_XXXX
 int ida_export pyvar_to_idcvar(
