@@ -11,7 +11,7 @@ inline int IDAPyInt_Check(PyObject *obj)
   return PyLong_Check(obj);
 }
 
-inline long IDAIDAPyInt_AsLong(PyObject *io)
+inline long IDAPyInt_AsLong(PyObject *io)
 {
   return PyLong_AsLong(io);
 }

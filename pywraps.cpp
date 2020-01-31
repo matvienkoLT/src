@@ -229,32 +229,6 @@ Py_ssize_t ida_export PyW_PyListToStrVec(qstrvec_t *out, PyObject *py_list)
 
 //-------------------------------------------------------------------------
 
-//-------------------------------------------------------------------------
-PyObject *ida_export meminfo_vec_t_to_py(meminfo_vec_t &ranges)
-{
-  PYW_GIL_CHECK_LOCKED_SCOPE();
-
-  PyObject *py_list = PyList_New(ranges.size());
-  meminfo_vec_t::const_iterator it, it_end(ranges.end());
-  Py_ssize_t i = 0;
-  for ( it=ranges.begin(); it != it_end; ++it, ++i )
-  {
-    const memory_info_t &mi = *it;
-    // start_ea end_ea name sclass sbase bitness perm
-    PyList_SetItem(py_list, i,
-      Py_BuildValue("(" PY_BV_EA PY_BV_EA "ss" PY_BV_EA "II)",
-        bvea_t(mi.start_ea),
-        bvea_t(mi.end_ea),
-        mi.name.c_str(),
-        mi.sclass.c_str(),
-        bvea_t(mi.sbase),
-        (unsigned int)(mi.bitness),
-        (unsigned int)mi.perm));
-  }
-  return py_list;
-}
-
-//-------------------------------------------------------------------------
 static qvector<ref_t> py_compiled_form_vec;
 
 //-------------------------------------------------------------------------
@@ -1793,83 +1767,9 @@ void py_customidamemo_t::convert_node_info(
 #undef COPY_PROP
 }
 
-//-------------------------------------------------------------------------
-void ida_export py_customidamemo_t_set_nodes_infos(
-        py_customidamemo_t *_this,
-        PyObject *dict)
-{
-  if ( !PyDict_Check(dict) )
-    return;
-  Py_ssize_t pos = 0;
-  PyObject *o_key, *o_value;
-  while ( PyDict_Next(dict, &pos, &o_key, &o_value) )
-  {
-    borref_t key(o_key);
-    borref_t value(o_value);
-    if ( !PyNumber_Check(key.o) )
-      continue;
-    uint32 flags;
-    node_info_t ni;
-    _this->convert_node_info(&ni, &flags, value);
-    int idx = PyInt_AsLong(key.o);
-    viewer_set_node_info(_this->view, idx, ni, flags);
-  }
-}
 
 //-------------------------------------------------------------------------
-PyObject *ida_export py_customidamemo_t_get_node_info(
-        py_customidamemo_t *_this,
-        PyObject *py_node_idx)
-{
-  if ( !PyNumber_Check(py_node_idx) )
-    Py_RETURN_NONE;
-  node_info_t ni;
-  if ( !viewer_get_node_info(_this->view, &ni, PyInt_AsLong(py_node_idx)) )
-    Py_RETURN_NONE;
-  return Py_BuildValue("(kkks)", ni.bg_color, ni.frame_color, ni.ea, ni.text.c_str());
-}
 
-//-------------------------------------------------------------------------
-void ida_export py_customidamemo_t_del_nodes_infos(
-        py_customidamemo_t *_this,
-        PyObject *py_nodes)
-{
-  if ( !PySequence_Check(py_nodes) )
-    return;
-  Py_ssize_t sz = PySequence_Size(py_nodes);
-  for ( Py_ssize_t i = 0; i < sz; ++i )
-  {
-    newref_t item(PySequence_GetItem(py_nodes, i));
-    if ( !PyNumber_Check(item.o) )
-      continue;
-    int idx = PyInt_AsLong(item.o);
-    viewer_del_node_info(_this->view, idx);
-  }
-}
-
-//-------------------------------------------------------------------------
-PyObject *ida_export py_customidamemo_t_get_current_renderer_type(
-        py_customidamemo_t *_this)
-{
-  tcc_renderer_type_t rt = get_view_renderer_type(_this->view);
-  return PyLong_FromLong(long(rt));
-}
-
-//-------------------------------------------------------------------------
-void ida_export py_customidamemo_t_set_current_renderer_type(
-        py_customidamemo_t *_this,
-        PyObject *py_rto)
-{
-  tcc_renderer_type_t rt = TCCRT_INVALID;
-  borref_t py_rt(py_rto);
-  if ( PyNumber_Check(py_rt.o) )
-  {
-    rt = tcc_renderer_type_t(PyLong_AsLong(py_rt.o));
-    set_view_renderer_type(_this->view, rt);
-  }
-}
-
-//-------------------------------------------------------------------------
 PyObject *ida_export py_customidamemo_t_create_groups(
         py_customidamemo_t *_this,
         PyObject *_groups_infos)
@@ -1888,19 +1788,19 @@ PyObject *ida_export py_customidamemo_t_create_groups(
     if ( nodes.o == NULL || !PySequence_Check(nodes.o) )
       continue;
     borref_t text(PyDict_GetItemString(item.o, "text"));
-    if ( text.o == NULL || !PyString_Check(text.o) )
+    if ( text.o == NULL || !IDAPyStr_Check(text.o) )
       continue;
     group_crinfo_t gi;
     Py_ssize_t nodes_cnt = PySequence_Size(nodes.o);
     for ( Py_ssize_t k = 0; k < nodes_cnt; ++k )
     {
       newref_t node(PySequence_GetItem(nodes.o, k));
-      if ( PyInt_Check(node.o) )
-        gi.nodes.add_unique(PyInt_AsLong(node.o));
+      if ( IDAPyInt_Check(node.o) )
+        gi.nodes.add_unique(IDAPyInt_AsLong(node.o));
     }
     if ( !gi.nodes.empty() )
     {
-      gi.text = PyString_AsString(text.o);
+      IDAPyStr_AsUTF8(&gi.text, text.o);
       gis.push_back(gi);
     }
   }
@@ -1910,7 +1810,7 @@ PyObject *ida_export py_customidamemo_t_create_groups(
 
   PyObject *py_groups = PyList_New(0);
   for ( intvec_t::const_iterator it = groups.begin(); it != groups.end(); ++it )
-    PyList_Append(py_groups, PyInt_FromLong(long(*it)));
+    PyList_Append(py_groups, IDAPyInt_FromLong(long(*it)));
   return py_groups;
 }
 
@@ -1921,9 +1821,9 @@ static void pynodes_to_idanodes(intvec_t *idanodes, ref_t pynodes)
   for ( Py_ssize_t i = 0; i < sz; ++i )
   {
     newref_t item(PySequence_GetItem(pynodes.o, i));
-    if ( !PyInt_Check(item.o) )
+    if ( !IDAPyInt_Check(item.o) )
       continue;
-    idanodes->add_unique(PyInt_AsLong(item.o));
+    idanodes->add_unique(IDAPyInt_AsLong(item.o));
   }
 }
 
@@ -1941,7 +1841,7 @@ PyObject *ida_export py_customidamemo_t_delete_groups(
   pynodes_to_idanodes(&ida_groups, groups);
   if ( ida_groups.empty() )
     Py_RETURN_NONE;
-  if ( viewer_delete_groups(_this->view, ida_groups, int(PyInt_AsLong(new_current.o))) )
+  if ( viewer_delete_groups(_this->view, ida_groups, int(IDAPyInt_AsLong(new_current.o))) )
     Py_RETURN_TRUE;
   else
     Py_RETURN_FALSE;
@@ -1965,7 +1865,7 @@ PyObject *ida_export py_customidamemo_t_set_groups_visibility(
   pynodes_to_idanodes(&ida_groups, groups);
   if ( ida_groups.empty() )
     Py_RETURN_NONE;
-  if ( viewer_set_groups_visibility(_this->view, ida_groups, expand.o == Py_True, int(PyInt_AsLong(new_current.o))) )
+  if ( viewer_set_groups_visibility(_this->view, ida_groups, expand.o == Py_True, int(IDAPyInt_AsLong(new_current.o))) )
     Py_RETURN_TRUE;
   else
     Py_RETURN_FALSE;
@@ -1979,7 +1879,7 @@ bool ida_export py_customidamemo_t_bind(py_customidamemo_t *_this, PyObject *sel
   PYGLOG("%p: py_customidamemo_t::bind(self=%p, view=%p)\n", _this, _this->self.o, _this->view);
   PYW_GIL_CHECK_LOCKED_SCOPE();
 
-  newref_t py_cobj(PyCObject_FromVoidPtr(_this, NULL));
+  newref_t py_cobj(PyCapsule_New(_this, VALID_CAPSULE_NAME, NULL));
   PyObject_SetAttrString(self, S_M_THIS, py_cobj.o);
 
   _this->self = borref_t(self);
@@ -1994,7 +1894,7 @@ void ida_export py_customidamemo_t_unbind(py_customidamemo_t *_this, bool clear_
     return;
   PYGLOG("%p: py_customidamemo_t::unbind(); self.o=%p, view=%p\n", _this, _this->self.o, _this->view);
   PYW_GIL_CHECK_LOCKED_SCOPE();
-  newref_t py_cobj(PyCObject_FromVoidPtr(NULL, NULL));
+  newref_t py_cobj(PyCapsule_New(_this, VALID_CAPSULE_NAME, NULL));
   PyObject_SetAttrString(_this->self.o, S_M_THIS, py_cobj.o);
   _this->self = newref_t(NULL);
   if ( clear_view )
@@ -2271,14 +2171,14 @@ bool ida_export idapython_convert_cli_completions(
     borref_t i0(PyTuple_GetItem(py_res.o, 0));
     borref_t i1(PyTuple_GetItem(py_res.o, 1));
     borref_t i2(PyTuple_GetItem(py_res.o, 2));
-    ok = PyList_Check(i0.o) && PyInt_Check(i1.o) && PyInt_Check(i2.o);
+    ok = IDAPyInt_Check(i0.o) && IDAPyInt_Check(i1.o) && IDAPyInt_Check(i2.o);
     if ( ok )
     {
       ok = PyW_PyListToStrVec(out_completions, i0.o) > 0;
       if ( ok )
       {
-        *out_match_start = PyInt_AsLong(i1.o);
-        *out_match_end = PyInt_AsLong(i2.o);
+        *out_match_start = IDAPyInt_AsLong(i1.o);
+        *out_match_end = IDAPyInt_AsLong(i2.o);
         ok = PyErr_Occurred() == NULL;
       }
       else
