@@ -1,3 +1,11 @@
+"""
+ This script replaces the long sequence of calls like:
+ SWIG_Python_SetConstant(d, "s39_xg",SWIG_From_int(static_cast< int >(s39_xg)));
+ SWIG_Python_SetConstant(d, "s39_xgr",SWIG_From_int(static_cast< int >(s39_xgr)));
+ by a table of names+values and a loop calling the function.
+ This is necessitated by the huge slowdown in GCC when trying to optimize a huge list of such calls
+ in allins.cpp SWIG wrapper (~20 min).
+"""
 from __future__ import print_function
 
 import re
@@ -54,75 +62,27 @@ subexprs = {
         "cit_int",
         "i",
         "int",
-        "SWIG_From_int(static_cast< int >(ci.val.i))"),
-    "u" : Foldable(
-        pyobj_expr_uint,
-        "cit_uint",
-        "u",
-        "unsigned int",
-        "SWIG_From_unsigned_SS_int(static_cast< unsigned int >(ci.val.u))"),
-    "l" : Foldable(
-        pyobj_expr_long,
-        "cit_long",
-        "l",
-        "long",
-        "SWIG_From_long(static_cast< long >(ci.val.l))"),
-    "ul" : Foldable(
-        pyobj_expr_ulong,
-        "cit_ulong",
-        "ul",
-        "unsigned long",
-        "SWIG_From_unsigned_SS_long(static_cast< unsigned long >(ci.val.ul))"),
-    "s" : Foldable(
-        pyobj_expr_str,
-        "cit_charptr",
-        "s",
-        "char *",
-        "SWIG_FromCharPtr(ci.val.s)"),
+        "SWIG_From_int(static_cast< int >(ci.val))"),
 }
 
 def generate_constants(constants):
     # now, generate the array & loop
     outlines.append("""
 /* 'SetConstant' replacement */
-union ida_local cival_t
-{
-    PyObject *o;
-    int i;
-    unsigned int u;
-    long l;
-    unsigned long ul;
-    const char *s;
-};
-
-enum cit_t
-{
-    cit_int = 1,
-    cit_uint,
-    cit_long,
-    cit_ulong,
-    cit_charptr,
-    cit_obj,
-};
-
 static const ida_local struct ci_t
 {
     const char *name;
-    cival_t val;
-    cit_t type;
+    int  val;
 } cis[%d] = {
 """ % len(constants))
 
     for c in constants:
         name = c[0]
         expr = c[1]
-        init = "o"
-        cast = "PyObject *"
-        citype = "cit_obj"
 
         # Analyze expression. If it is one of the
         # supported types, let's simplify the code.
-        for kind in subexprs.keys():
+        for kind in ["i"]:
             subexpr = subexprs[kind]
             sematch = subexpr.re.search(expr)
             if sematch:
@@ -132,39 +92,24 @@ static const ida_local struct ci_t
                 cast = subexpr.cast
                 subexpr.found_any = True
                 break
-        outlines.append("\t{%s, {%s: (%s) (%s)}, %s},\n" % (name, init, cast, expr, citype))
+        outlines.append("\t{%s, static_cast< int >(%s)},\n" % (name, expr))
 
     outlines.append("""
 };
-
 for ( size_t _cidx = 0; _cidx < qnumber(cis); ++_cidx )
 {
   const ci_t &ci = cis[_cidx];
-  PyObject *o = NULL;
-  switch ( ci.type )
-  {
-""")
+  PyObject *o = """)
 
-    for kind in subexprs.keys():
-        subexpr = subexprs[kind]
-        if subexpr.found_any:
-            outlines.append("""
-    case %s:
-      o = %s;
-      break;
-                    """ % (subexpr.enum, subexpr.replacement))
+    subexpr = subexprs["i"]
+    outlines.append("""%s;""" % (subexpr.replacement))
 
     outlines.append("""
-    case cit_obj:
-      o = ci.val.o;
-      break;
-    default: INTERR(0);
-  }
   SWIG_Python_SetConstant(d, ci.name, o);
 }
 """)
 
-with open(args.file, "rb") as f:
+with open(args.file) as f:
     constants = []
 
     for line in f:
@@ -204,7 +149,7 @@ with open(args.file, "rb") as f:
                     outlines.append(line)
 
 import tempfile
-temp = tempfile.NamedTemporaryFile(delete=False)
+temp = tempfile.NamedTemporaryFile(mode="w", delete=False)
 temp.write("".join(outlines))
 temp.close()
 

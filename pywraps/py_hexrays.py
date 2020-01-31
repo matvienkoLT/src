@@ -211,7 +211,7 @@ def cblock_insert(self, index, item):
     return
 cblock_t.insert = cblock_insert
 
-cfuncptr_t.__str__ = lambda self: str(self.__deref__())
+cfuncptr_t.__eq__ = lambda self, other: self.__ptrval__() == other.__ptrval__()
 
 import ida_typeinf
 def cfunc_type(self):

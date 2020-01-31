@@ -340,7 +340,7 @@ public:
           return True
 
       def _acquire_ownership(self, v, acquire):
-          if acquire and (v is not None) and not isinstance(v, (int, long)):
+          if acquire and (v is not None) and not isinstance(v, ida_idaapi.integer_types):
               if not v.thisown:
                   raise Exception("%s is already owned, and cannot be reused" % v)
               v.thisown = False
@@ -430,7 +430,7 @@ public:
   CINSN_MEMBER_REF(goto);
   CINSN_MEMBER_REF(asm);
 
-  static bool insn_is_epilog(const cinsn_t *insn) const { return insn == INS_EPILOG; }
+ static bool insn_is_epilog(const cinsn_t *insn) { return insn == INS_EPILOG; }
 
   %pythoncode {
     def is_epilog(self):
@@ -547,10 +547,10 @@ public:
 };
 
 // ignore future declarations of at() for these classes
-%ignore qvector< cinsn_t *>::at(size_t) const;
-%ignore qvector< cinsn_t *>::at(size_t);
-%ignore qvector< citem_t *>::at(size_t) const;
-%ignore qvector< citem_t *>::at(size_t);
+// %ignore qvector< cinsn_t *>::at(size_t) const;
+// %ignore qvector< cinsn_t *>::at(size_t);
+// %ignore qvector< citem_t *>::at(size_t) const;
+// %ignore qvector< citem_t *>::at(size_t);
 %ignore qvector< citem_t *>::grow;
 %ignore qvector< cinsn_t *>::grow;
 
@@ -632,9 +632,12 @@ typedef qlist<cinsn_t>::iterator qlist_cinsn_t_iterator;
 class qlist_cinsn_t_iterator {};
 %extend qlist_cinsn_t_iterator {
     const cinsn_t &cur { return *(*self); }
-    void next(void) { (*self)++; }
+    void __next__(void) { (*self)++; }
     bool operator==(const qlist_cinsn_t_iterator *x) const { return &(self->operator*()) == &(x->operator*()); }
     bool operator!=(const qlist_cinsn_t_iterator *x) const { return &(self->operator*()) != &(x->operator*()); }
+    %pythoncode {
+    next = __next__
+    }
 };
 
 %extend qlist<cinsn_t> {
@@ -716,7 +719,7 @@ void qswap(cinsn_t &a, cinsn_t &b);
 %rename (get_widget_vdui) py_get_widget_vdui;
 
 //-------------------------------------------------------------------------
-#if SWIG_VERSION == 0x20012
+#if SWIG_VERSION == 0x40000 || SWIG_VERSION == 0x40001
 %typemap(out) cfuncptr_t {}
 %typemap(ret) cfuncptr_t
 {
