@@ -409,6 +409,8 @@ idaman error_t ida_export PyW_CreateIdcException(idc_value_t *res, const char *m
 //
 #define PYWCVTF_AS_TUPLE                 0x1
 #define PYWCVTF_INT64_AS_UNSIGNED_PYLONG 0x2 // don't wrap int64 into 'PyIdc_cvt_int64__' objects, but make them 'long' instead
+#define PYWCVTF_STR_AS_BYTES             0x4 // VT_STR objects will be converted into 'bytes', not strings coming from UTF-8 data
+
 
 // Converts from IDC to Python
 idaman bool ida_export pyw_convert_idc_args(

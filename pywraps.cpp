@@ -385,14 +385,27 @@ static const ext_idcfunc_t opaque_dtor_desc =
 };
 
 //-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
 // Converts a Python variable into an IDC variable
 // This function returns on one CIP_XXXX
-int ida_export pyvar_to_idcvar(
+static int pyvar_to_idcvar1(
         const ref_t &py_var,
         idc_value_t *idc_var,
-        int *gvar_sn)
+        int *gvar_sn,
+        qvector<const PyObject *> &_visited);
+static int pyvar_to_idcvar2(
+        const ref_t &py_var,
+        idc_value_t *idc_var,
+        int *gvar_sn,
+        qvector<const PyObject *> &visited)
 {
-  PYW_GIL_CHECK_LOCKED_SCOPE();
+  if ( !visited.add_unique(py_var.o) )
+  {
+    qstring buf;
+    buf.sprnt("<PyObject-%p-snipped-to-prevent-infinite-recursion>", py_var.o);
+    idc_var->_set_string(buf.c_str());
+    return CIP_OK;
+  }
 
   // None / NULL
   if ( py_var == NULL || py_var.o == Py_None )
@@ -404,6 +417,7 @@ int ida_export pyvar_to_idcvar(
   {
     return CIP_OK;
   }
+  // String
 #ifdef PY3
   else if ( PyBytes_Check(py_var.o) )
   {
@@ -468,16 +482,15 @@ int ida_export pyvar_to_idcvar(
 
       // Convert the item into an IDC variable
       idc_value_t v;
-      ok = pyvar_to_idcvar(py_item, &v, gvar_sn) >= CIP_OK;
+      ok = pyvar_to_idcvar1(py_item, &v, gvar_sn, visited) >= CIP_OK;
       if ( ok )
       {
+        // Form the attribute name
 #ifdef PY3
         newref_t py_int(PyLong_FromSsize_t(i));
 #else
         newref_t py_int(PyInt_FromSsize_t(i));
 #endif
-
-        // Form the attribute name
         ok = PyW_ObjectToString(py_int.o, &attr_name);
         if ( !ok )
           break;
@@ -516,7 +529,7 @@ int ida_export pyvar_to_idcvar(
 
       // Convert the attribute into an IDC value
       idc_value_t v;
-      ok = pyvar_to_idcvar(val, &v, gvar_sn) >= CIP_OK;
+      ok = pyvar_to_idcvar1(val, &v, gvar_sn, visited) >= CIP_OK;
       if ( ok )
       {
         // Store the attribute
@@ -575,7 +588,7 @@ int ida_export pyvar_to_idcvar(
           qsnprintf(buf, sizeof(buf), S_PY_IDC_GLOBAL_VAR_FMT, *gvar_sn);
           idc_value_t *gvar = add_idc_gvar(buf);
           // Convert the python value into the IDC global variable
-          bool ok = pyvar_to_idcvar(attr, gvar, gvar_sn) >= CIP_OK;
+          bool ok = pyvar_to_idcvar1(attr, gvar, gvar_sn, visited) >= CIP_OK;
           if ( ok )
           {
             (*gvar_sn)++;
@@ -596,15 +609,16 @@ int ida_export pyvar_to_idcvar(
       //
       default:
         // A normal object?
-        newref_t py_dir(PyObject_Dir(py_var.o));
-        Py_ssize_t size = PyList_Size(py_dir.o);
-        if ( py_dir == NULL || !PyList_Check(py_dir.o) || size == 0 )
-          return CIP_FAILED;
-        // Create the IDC object
-        idcv_object(idc_var);
-        for ( Py_ssize_t i=0; i < size; i++ )
         {
-          borref_t item(PyList_GetItem(py_dir.o, i));
+          newref_t py_dir(PyObject_Dir(py_var.o));
+          Py_ssize_t size = PyList_Size(py_dir.o);
+          if ( py_dir == NULL || !PyList_Check(py_dir.o) || size == 0 )
+            return CIP_FAILED;
+          // Create the IDC object
+          idcv_object(idc_var);
+          for ( Py_ssize_t i=0; i < size; i++ )
+          {
+            borref_t item(PyList_GetItem(py_dir.o, i));
 #ifdef PY3
             qstring field_name_buf;
             IDAPyStr_AsUTF8(&field_name_buf, item.o);
@@ -612,36 +626,46 @@ int ida_export pyvar_to_idcvar(
 #else
             const char *field_name = PyString_AsString(item.o);
 #endif
-          if ( field_name == NULL )
-            continue;
+            if ( field_name == NULL )
+              continue;
 
-          size_t len = strlen(field_name);
+            size_t len = strlen(field_name);
 
-          // Skip private attributes
-          if ( (len > 2 )
-            && (strncmp(field_name, "__", 2) == 0 )
-            && (strncmp(field_name+len-2, "__", 2) == 0) )
-          {
-            continue;
+            // Skip private attributes
+            if ( (len > 2 )
+              && (strncmp(field_name, "__", 2) == 0 )
+              && (strncmp(field_name+len-2, "__", 2) == 0) )
+            {
+              continue;
+            }
+
+            idc_value_t v;
+            newref_t attr(PyObject_GetAttrString(py_var.o, field_name));
+            if ( attr == NULL )
+              return CIP_FAILED;
+            else if ( pyvar_to_idcvar1(attr, &v, gvar_sn, visited) < CIP_OK )
+              return CIP_FAILED;
+
+            // Store the attribute
+            set_idcv_attr(idc_var, field_name, v);
           }
-
-          idc_value_t v;
-          // Get the non-private attribute from the object
-          newref_t attr(PyObject_GetAttrString(py_var.o, field_name));
-          if ( attr == NULL
-            // Convert the attribute into an IDC value
-            || pyvar_to_idcvar(attr, &v, gvar_sn) < CIP_OK )
-          {
-            return CIP_FAILED;
-          }
-
-          // Store the attribute
-          set_idcv_attr(idc_var, field_name, v);
         }
         break;
     }
   }
   return CIP_OK;
+}
+
+// Converts a Python variable into an IDC variable
+// This function returns on one CIP_XXXX
+int ida_export pyvar_to_idcvar(
+        const ref_t &py_var,
+        idc_value_t *idc_var,
+        int *gvar_sn)
+{
+  PYW_GIL_CHECK_LOCKED_SCOPE();
+  qvector<const PyObject *> visited;
+  return pyvar_to_idcvar1(py_var, idc_var, gvar_sn, visited);
 }
 
 //-------------------------------------------------------------------------
@@ -671,7 +695,7 @@ int ida_export idcvar_to_pyvar(
     case VT_PVOID:
       if ( *py_var == NULL )
       {
-        newref_t nr(PyCObject_FromVoidPtr(idc_var.pvoid, NULL));
+        newref_t nr(PyCapsule_New(idc_var.pvoid, VALID_CAPSULE_NAME, NULL));
         *py_var = nr;
       }
       else
@@ -716,7 +740,10 @@ int ida_export idcvar_to_pyvar(
       if ( *py_var == NULL )
       {
         const qstring &s = idc_var.qstr();
-        *py_var = newref_t(PyString_FromStringAndSize(s.begin(), s.length()));
+        if ( (flags & PYWCVTF_STR_AS_BYTES) != 0 )
+          *py_var = newref_t(IDAPyBytes_FromMemAndSize(s.begin(), s.length()));
+        else
+          *py_var = newref_t(IDAPyStr_FromUTF8AndSize(s.begin(), s.length()));
         break;
       }
       else
@@ -1072,7 +1099,7 @@ ref_t ida_export create_linked_class_instance(
     ref_t py_class = PyW_TryGetAttrString(py_module.o, clsname);
     if ( py_class != NULL )
     {
-      newref_t py_lnk(PyCObject_FromVoidPtr(lnk, NULL));
+      newref_t py_lnk(PyCapsule_New(lnk, VALID_CAPSULE_NAME, NULL));
       ref_t py_obj = newref_t(PyObject_CallFunctionObjArgs(py_class.o, py_lnk.o, NULL));
       if ( !PyW_GetError() && py_obj != NULL )
         result = py_obj;
@@ -1122,12 +1149,7 @@ bool ida_export PyW_GetStringAttr(
   ref_t py_attr(PyW_TryGetAttrString(py_obj, attr_name));
   if ( py_attr == NULL )
     return false;
-
-  bool ok = PyString_Check(py_attr.o);
-  if ( ok )
-    *str = PyString_AsString(py_attr.o);
-
-  return ok;
+  return IDAPyStr_Check(py_attr.o) != 0 && IDAPyStr_AsUTF8(str, py_attr.o);
 }
 
 //------------------------------------------------------------------------
@@ -1159,25 +1181,19 @@ ref_t ida_export PyW_TryImportModule(const char *name)
 // If the number does not fit then VT_INT64 will be used
 bool ida_export PyW_GetNumberAsIDC(PyObject *py_var, idc_value_t *idc_var)
 {
-  PYW_GIL_CHECK_LOCKED_SCOPE();
-  if ( !(PyInt_CheckExact(py_var) || PyLong_CheckExact(py_var)) )
+  uint64 num;
+  bool is_64;
+  if ( !PyW_GetNumber(py_var, &num, &is_64) )
     return false;
-
-  PY_LONG_LONG pyll = PyLong_AsLongLong(py_var);
-  if ( PyErr_Occurred() )
-    return false;
-
-  bool as_i64 = pyll >= 0
-              ? pyll > (PY_LONG_LONG) SVAL_MAX    //-V547 'pyll > (__int64) SVAL_MAX' is always false
-              : pyll < (PY_LONG_LONG) SVAL_MIN;   //-V547 is always false
-  if ( as_i64 )                                   //-V547 'as_i64' is always false
-    idc_var->set_int64(int64(pyll));
+  if ( !is_64 || int64(num) >= SVAL_MIN && int64(num) <= SVAL_MAX ) //-V560 is always true
+    idc_var->set_long(sval_t(num));
   else
-    idc_var->set_long(sval_t(pyll));
+    idc_var->set_int64(int64(num));
   return true;
 }
 
 //-------------------------------------------------------------------------
+
 // Parses a Python object as a long or long long
 bool ida_export PyW_GetNumber(PyObject *py_var, uint64 *num, bool *is_64)
 {
@@ -1194,17 +1210,27 @@ bool ida_export PyW_GetNumber(PyObject *py_var, uint64 *num, bool *is_64)
 
   do
   {
+#ifdef PY3
+    if ( !PyLong_CheckExact(py_var) )
+#else
     if ( !(PyInt_CheckExact(py_var) || PyLong_CheckExact(py_var)) )
+#endif
     {
       rc = false;
       break;
     }
 
+    constexpr bool is_long_64 = sizeof(long) > 4;
+
     // Can we convert to C long?
+#ifdef PY3
+    long l = PyLong_AsLong(py_var);
+#else
     long l = PyInt_AsLong(py_var);
+#endif
     if ( !PyErr_Occurred() )
     {
-      SETNUM(uint64(l), false);
+      SETNUM(uint64(l), is_long_64);
       break;
     }
 
@@ -1215,7 +1241,7 @@ bool ida_export PyW_GetNumber(PyObject *py_var, uint64 *num, bool *is_64)
     unsigned long ul = PyLong_AsUnsignedLong(py_var);
     if ( !PyErr_Occurred() )    //-V547 '!PyErr_Occurred()' is always false
     {
-      SETNUM(uint64(ul), false);
+      SETNUM(uint64(ul), is_long_64);
       break;
     }
     PyErr_Clear();
