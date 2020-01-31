@@ -16,6 +16,7 @@ import os
 import re
 import textwrap
 import xml.etree.ElementTree as ET
+import six
 
 try:
     from argparse import ArgumentParser
@@ -38,6 +39,7 @@ sys.path.append(this_dir)
 import doxygen_utils
 
 DOCSTR_MARKER  = '"""'
+DOCSTR_MARKER_START_RAW  = 'r"""'
 
 def verb(msg):
     if args.verbose:
@@ -120,6 +122,72 @@ def get_indent_string(line):
     return " " * indent
 
 # --------------------------------------------------------------------------
+def split_oneliner_comments_and_remove_property_docstrings(lines):
+    out_lines = []
+    pat = re.compile('(.*= property\(.*), doc=r""".*"""(\))')
+    for line in lines:
+
+        line = line.rstrip()
+
+        m = pat.match(line)
+        if m:
+            line = m.group(1) + m.group(2)
+
+        if line.startswith("#"):
+            out_lines.append(line)
+            continue
+
+        if len(line) == 0:
+            out_lines.append("")
+            continue
+
+        handled = False
+        if line.endswith(DOCSTR_MARKER):
+            emarker_idx = line.rfind(DOCSTR_MARKER)
+            if line.lstrip().startswith(DOCSTR_MARKER_START_RAW):
+                smarker = DOCSTR_MARKER_START_RAW
+                smarker_idx = line.find(DOCSTR_MARKER_START_RAW)
+            elif line.lstrip().startswith(DOCSTR_MARKER):
+                smarker = DOCSTR_MARKER
+                smarker_idx = line.find(DOCSTR_MARKER)
+            else:
+                smarker_idx = -1
+            if smarker_idx > -1:
+                pfx = line[0:smarker_idx]
+                meat = line[smarker_idx+len(smarker):emarker_idx]
+                if len(meat.strip()):
+                    out_lines.append(pfx + smarker)
+                    out_lines.append(pfx + meat)
+                    out_lines.append(pfx + DOCSTR_MARKER)
+                    handled = True
+        if not handled:
+            out_lines.append(line)
+                # meat = line[0:idx]
+
+        # pfx = None
+        # while line.find(DOCSTR_MARKER) > -1:
+        #     idx = line.find(DOCSTR_MARKER)
+        #     if idx > 0 and line[idx-1] == 'r':
+        #         idx -= 1
+        #     meat = line[0:idx]
+        #     # print("MEAT: '%s'" % meat)
+        #     try:
+        #         if len(meat.strip()) == 0:
+        #             pfx = meat
+        #             out_lines.append(pfx + DOCSTR_MARKER)
+        #         else:
+        #             out_lines.append((pfx if pfx is not None else "") + meat)
+        #             out_lines.append((pfx if pfx is not None else "") + DOCSTR_MARKER)
+        #     except:
+        #         raise BaseException("Error at line: " + line)
+        #     line = line[idx + len(DOCSTR_MARKER):]
+        # if len(line.strip()) > 0:
+        #     out_lines.append((pfx if pfx is not None else "") + line)
+    return out_lines
+
+# --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
 class collect_pydoc_t(object):
     """
     Search in all files in the 'plugins/idapython/swig/' directory
@@ -149,7 +217,7 @@ class collect_pydoc_t(object):
     def collect_fun(self, fun_name):
         collected = []
         while len(self.lines) > 0:
-            line = next(self)
+            line = self.next()
             if self.state is self.S_IN_PYDOC:
                 if line.startswith(self.PYDOC_END):
                     self.state = self.S_UNKNOWN
@@ -173,7 +241,7 @@ class collect_pydoc_t(object):
     def collect_method(self, cls, method_name):
         collected = []
         while len(self.lines) > 0:
-            line = next(self)
+            line = self.next()
             if self.state is self.S_IN_PYDOC:
                 if line.startswith(self.PYDOC_END):
                     self.state = self.S_UNKNOWN
@@ -195,7 +263,7 @@ class collect_pydoc_t(object):
         collected = []
         cls = {"methods":{},"doc":None}
         while len(self.lines) > 0:
-            line = next(self)
+            line = self.next()
             if self.state is self.S_IN_PYDOC:
                 if line.startswith("    def "):
                     self.collect_method(cls, get_fun_name(line))
@@ -216,12 +284,12 @@ class collect_pydoc_t(object):
 
     def collect_file_pydoc(self, filename):
         self.state = self.S_UNKNOWN
-        with open(filename, "rt") as f:
-            self.lines = split_oneliner_comments(f.readlines())
+        with open(filename) as f:
+            self.lines = split_oneliner_comments_and_remove_property_docstrings(f.readlines())
         context = None
         doc = []
         while len(self.lines) > 0:
-            line = next(self)
+            line = self.next()
             if self.state is self.S_UNKNOWN:
                 if line.startswith(self.PYDOC_START):
                     self.state = self.S_IN_PYDOC
@@ -410,7 +478,7 @@ class idaapi_fixer_t(object):
         return line
 
     def copy(self, out):
-        line = next(self)
+        line = self.next()
         out.append(line)
         return line
 
@@ -485,7 +553,7 @@ class idaapi_fixer_t(object):
             # Opening docstring line; determine indentation level
             indent = get_indent_string(line)
             while True:
-                line = next(self)
+                line = self.next()
                 if line.find(DOCSTR_MARKER) > -1:
                     # Closing docstring line
                     swig_generated_param_names = self.extract_swig_generated_param_names(fun_name, out[doc_start_line_idx:])
@@ -538,7 +606,7 @@ class idaapi_fixer_t(object):
         # If class has doc, maybe inject additional <pydoc>
         if line.find(DOCSTR_MARKER) > -1:
             while True:
-                line = next(self)
+                line = self.next()
                 if line.find(DOCSTR_MARKER) > -1:
                     doc = found["doc"]
                     if doc is not None:
@@ -554,7 +622,7 @@ class idaapi_fixer_t(object):
         # their docstring
         method_start = indent + "def "
         while True:
-            line = next(self)
+            line = self.next()
             # print "Fixing methods.. Line is '%s'" % line
             if line.startswith(indent) or line.strip() == "":
                 if line.startswith(method_start):
@@ -569,7 +637,7 @@ class idaapi_fixer_t(object):
     def fix_assignment(self, out, match):
         # out.append("LOL: %s" % match.group(1))
         line = self.copy(out)
-        line = next(self)
+        line = self.next()
         if not line.startswith(DOCSTR_MARKER):
             # apparently no epydoc-compliant docstring follows. Let's
             # look for a possible match in the xml doc.
@@ -592,7 +660,7 @@ class idaapi_fixer_t(object):
         self.xml_tree = doxygen_utils.load_xml_for_module(xml_dir_path, args.module)
         out = []
         while len(self.lines) > 0:
-            line = next(self)
+            line = self.next()
             if line.startswith("def "):
                 self.push_front(line)
                 self.fix_fun(out)
@@ -615,7 +683,7 @@ collecter = collect_pydoc_t(args.wrapper)
 collected = collecter.collect()
 fixer = idaapi_fixer_t(collected, patches)
 fixer.fix_file(args)
-with open(args.epydoc_injections, "wb") as fout:
+with open(args.epydoc_injections, "w") as fout:
     for key in sorted(fixer.epydoc_injections.keys()):
         fout.write("\n\nida_%s.%s\n" % (args.module, key))
         fout.write("\n".join(fixer.epydoc_injections[key]))

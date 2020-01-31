@@ -102,7 +102,7 @@ patches = [
 
 
 outlines = []
-with open(args.file, "rb") as f:
+with open(args.file) as f:
     lines = f.readlines()
     for line in lines:
         for patch in patches:
@@ -114,9 +114,8 @@ with open(args.file, "rb") as f:
         outlines.append(line)
 
 import tempfile
-temp = tempfile.NamedTemporaryFile(delete=False)
-temp.writelines(outlines)
+temp = tempfile.NamedTemporaryFile(mode="w", delete=False)
+temp.write("".join(outlines))
 temp.close()
 
 import shutil
-shutil.move(temp.name, args.file)
