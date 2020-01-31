@@ -1318,8 +1318,13 @@ bool ida_export PyW_ObjectToString(PyObject *obj, qstring *out)
   PYW_GIL_CHECK_LOCKED_SCOPE();
   newref_t py_str(PyObject_Str(obj));
   bool ok = py_str != NULL;
+#ifdef PY3
+  if ( ok )
+    IDAPyStr_AsUTF8(out, py_str.o);
+#else
   if ( ok )
     *out = PyString_AsString(py_str.o);
+#endif
   else
     out->qclear();
   return ok;
@@ -1335,78 +1340,51 @@ bool ida_export PyW_GetError(qstring *out, bool clear_err)
   if ( PyErr_Occurred() == NULL )
     return false;
 
-  // Error occurred but details not needed?
-  if ( out == NULL )
+  if ( out != NULL )
   {
-    // Just clear the error
+    // Get the exception info (this also clears the exception)
+    PyObject *err_type, *err_value, *err_traceback;
+    PyErr_Fetch(&err_type, &err_value, &err_traceback);
+
+    // Try helper first
+    ref_t py_ret;
+    ref_t py_fmtexc(get_idaapi_attr(S_IDAAPI_FORMATEXC));
+    if ( py_fmtexc != NULL )
+    {
+      py_ret = newref_t(PyObject_CallFunctionObjArgs(
+                                py_fmtexc.o,
+                                err_type,
+                                err_value,
+                                err_traceback,
+                                NULL));
+    }
+
+    // and fallback to simple stringification if needed
+    if ( py_ret == NULL )
+      py_ret = newref_t(PyObject_Str(err_value));
+
+    if ( py_ret != NULL )
+      IDAPyStr_AsUTF8(out, py_ret.o);
+    else
+      *out = "IDAPython: unknown error";
+
     if ( clear_err )
-      PyErr_Clear();
-    return true;
-  }
-
-  // Get the exception info
-  PyObject *err_type, *err_value, *err_traceback, *py_ret(NULL);
-  PyErr_Fetch(&err_type, &err_value, &err_traceback);
-
-  if ( !clear_err )
-    PyErr_Restore(err_type, err_value, err_traceback);
-
-  // Resolve FormatExc()
-  ref_t py_fmtexc(get_idaapi_attr(S_IDAAPI_FORMATEXC));
-
-  // Helper there?
-  if ( py_fmtexc != NULL )
-  {
-    // Call helper
-    py_ret = PyObject_CallFunctionObjArgs(
-      py_fmtexc.o,
-      err_type,
-      err_value,
-      err_traceback,
-      NULL);
-  }
-
-  // Clear the error
-  if ( clear_err )
-    PyErr_Clear();
-
-  // Helper failed?!
-  if ( py_ret == NULL )
-  {
-    // Just convert the 'value' part of the original error
-    py_ret = PyObject_Str(err_value);
-  }
-
-  // No exception text?
-  if ( py_ret == NULL )
-  {
-    *out = "IDAPython: unknown error!";
+    {
+      Py_XDECREF(err_traceback);
+      Py_XDECREF(err_value);
+      Py_XDECREF(err_type);
+    }
+    else
+    {
+      PyErr_Restore(err_type, err_value, err_traceback);
+    }
   }
   else
   {
-    *out = PyString_AsString(py_ret);
-    Py_DECREF(py_ret);
+    if ( clear_err )
+      PyErr_Clear();
   }
 
-  if ( clear_err )
-  {
-    Py_XDECREF(err_traceback);
-    Py_XDECREF(err_value);
-    Py_XDECREF(err_type);
-  }
-  return true;
-}
-
-//-------------------------------------------------------------------------
-static bool PyW_GetError(char *buf, size_t bufsz, bool clear_err)
-{
-  PYW_GIL_CHECK_LOCKED_SCOPE();
-
-  qstring s;
-  if ( !PyW_GetError(&s, clear_err) )
-    return false;
-
-  qstrncpy(buf, s.c_str(), bufsz);
   return true;
 }
 
@@ -1432,7 +1410,9 @@ void *ida_export pyobj_get_clink(PyObject *pyobj)
 
   // Try to query the link attribute
   ref_t attr(PyW_TryGetAttrString(pyobj, S_CLINK_NAME));
-  void *t = attr != NULL && PyCObject_Check(attr.o) ? PyCObject_AsVoidPtr(attr.o) : NULL;
+  void *t = attr != NULL && PyCapsule_IsValid(attr.o, VALID_CAPSULE_NAME)
+          ? PyCapsule_GetPointer(attr.o, VALID_CAPSULE_NAME)
+          : NULL;
   return t;
 }
 
@@ -1604,7 +1584,7 @@ bool pywraps_notify_when_t::notify_va(int slot, va_list va)
         ++it )
   {
     // Form the notification code
-    newref_t py_code(PyInt_FromLong(1 << slot));
+    newref_t py_code(IDAPyInt_FromLong(1 << slot));
     ref_t py_result;
     switch ( slot )
     {
@@ -1617,7 +1597,7 @@ bool pywraps_notify_when_t::notify_va(int slot, va_list va)
         }
       case NW_OPENIDB_SLOT:
         {
-          newref_t py_old(PyInt_FromLong(old));
+          newref_t py_old(IDAPyInt_FromLong(old));
           py_result = newref_t(PyObject_CallFunctionObjArgs(it->o, py_code.o, py_old.o, NULL));
         }
         break;
@@ -1802,7 +1782,7 @@ void py_customidamemo_t::convert_node_info(
     }                                                                   \
   } while ( false )
 #define COPY_ULONG_PROP(pname, flag) COPY_PROP(PyNumber_Check, PyLong_AsUnsignedLong, pname, flag)
-#define COPY_STRING_PROP(pname, flag) COPY_PROP(PyString_Check, PyString_AsString, pname, flag)
+#define COPY_STRING_PROP(pname, flag) COPY_PROP(IDAPyStr_Check, IDAPyBytes_AsString, pname, flag)
   COPY_ULONG_PROP(bg_color, NIF_BG_COLOR);
   COPY_ULONG_PROP(frame_color, NIF_FRAME_COLOR);
   COPY_ULONG_PROP(flags, NIF_FLAGS);
@@ -1811,25 +1791,6 @@ void py_customidamemo_t::convert_node_info(
 #undef COPY_STRING_PROP
 #undef COPY_ULONG_PROP
 #undef COPY_PROP
-}
-
-//-------------------------------------------------------------------------
-void ida_export py_customidamemo_t_set_node_info(
-        py_customidamemo_t *_this,
-        PyObject *py_node_idx,
-        PyObject *py_node_info,
-        PyObject *py_flags)
-{
-  if ( !PyNumber_Check(py_node_idx) || !PyNumber_Check(py_flags) )
-    return;
-  borref_t py_idx(py_node_idx);
-  borref_t py_ni(py_node_info);
-  borref_t py_fl(py_flags);
-  node_info_t ni;
-  _this->convert_node_info(&ni, NULL, py_ni);
-  int idx = PyInt_AsLong(py_idx.o);
-  uint32 flgs = PyLong_AsLong(py_fl.o);
-  viewer_set_node_info(_this->view, idx, ni, flgs);
 }
 
 //-------------------------------------------------------------------------
@@ -2328,6 +2289,30 @@ bool ida_export idapython_convert_cli_completions(
     }
   }
   return ok;
+}
+
+PyObject *ida_export meminfo_vec_t_to_py(meminfo_vec_t &ranges)
+{
+  PYW_GIL_CHECK_LOCKED_SCOPE();
+
+  PyObject *py_list = PyList_New(ranges.size());
+  meminfo_vec_t::const_iterator it, it_end(ranges.end());
+  Py_ssize_t i = 0;
+  for ( it=ranges.begin(); it != it_end; ++it, ++i )
+  {
+    const memory_info_t &mi = *it;
+    // start_ea end_ea name sclass sbase bitness perm
+    PyList_SetItem(py_list, i,
+      Py_BuildValue("(" PY_BV_EA PY_BV_EA "ss" PY_BV_EA "II)",
+        bvea_t(mi.start_ea),
+        bvea_t(mi.end_ea),
+        mi.name.c_str(),
+        mi.sclass.c_str(),
+        bvea_t(mi.sbase),
+        (unsigned int)(mi.bitness),
+        (unsigned int)mi.perm));
+  }
+  return py_list;
 }
 
 #undef DEF_REG_UNREG_REFCOUNTED

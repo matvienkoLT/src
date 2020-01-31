@@ -475,7 +475,7 @@ private:
     {
       ok = PyInt_Check(obj.o);
       if ( ok )
-        *out = uint32(PyInt_AsLong(obj.o));
+        *out = uint32(IDAPyInt_AsLong(obj.o));
     }
     return ok;
   }
@@ -593,7 +593,7 @@ private:
     if ( ok )
     {
       if ( important_lines != NULL )
-        *important_lines = PyInt_AsLong(PyTuple_GetItem(py_result.o, 0));
+        *important_lines = IDAPyInt_AsLong(PyTuple_GetItem(py_result.o, 0));
       hint = PyString_AsString(PyTuple_GetItem(py_result.o, 1));
     }
     return ok;

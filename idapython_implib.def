@@ -39,7 +39,6 @@ EXPORTS
   py_customidamemo_t_get_node_info
   py_customidamemo_t_set_current_renderer_type
   py_customidamemo_t_set_groups_visibility
-  py_customidamemo_t_set_node_info
   py_customidamemo_t_set_nodes_infos
   py_customidamemo_t_unbind
   pyobj_get_clink

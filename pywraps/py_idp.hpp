@@ -673,8 +673,8 @@ class IDP_Hooks
       newref_t py_idx(PySequence_GetItem(o, 1));
       if ( PyInt_Check(py_rc.o) && PyInt_Check(py_idx.o) )
       {
-        rc = PyInt_AsLong(py_rc.o);
-        *idx = PyInt_AsLong(py_idx.o);
+        rc = IDAPyInt_AsLong(py_rc.o);
+        *idx = IDAPyInt_AsLong(py_idx.o);
       }
     }
     return rc;
@@ -700,8 +700,8 @@ class IDP_Hooks
         && PyString_Check(py_out.o)
         && PyString_AsStringAndSize(py_out.o, &s, &len) != -1 )
       {
-        rc = PyInt_AsLong(py_rc.o);
-        *out_res = PyInt_AsLong(py_out_res.o);
+        rc = IDAPyInt_AsLong(py_rc.o);
+        *out_res = IDAPyInt_AsLong(py_out_res.o);
         if ( out != NULL )
         {
           out->qclear();

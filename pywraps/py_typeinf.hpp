@@ -654,7 +654,7 @@ int py_print_decls(text_sink_t &printer, til_t *til, PyObject *py_ordinals, uint
       PyErr_SetString(PyExc_ValueError, msg.begin());
       return 0;
     }
-    uint32 ord = PyInt_Check(item.o) ? PyInt_AsLong(item.o) : PyLong_AsLong(item.o);
+    uint32 ord = PyInt_Check(item.o) ? IDAPyInt_AsLong(item.o) : PyLong_AsLong(item.o);
     ordinals.push_back(ord);
   }
   return print_decls(printer, til, ordinals.empty() ? NULL : &ordinals, flags);

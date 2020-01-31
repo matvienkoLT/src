@@ -620,7 +620,7 @@ static int py_execute_sync(PyObject *py_callable, int reqf)
         newref_t py_result(PyObject_CallFunctionObjArgs(py_callable.o, NULL));
         int ret = py_result == NULL || !PyInt_Check(py_result.o)
                 ? -1
-                : PyInt_AsLong(py_result.o);
+                : IDAPyInt_AsLong(py_result.o);
         // if the requesting thread decided not to wait for the request to
         // complete, we have to self-destroy, nobody else will do it
         if ( (code & MFF_NOWAIT) != 0 )
@@ -979,7 +979,7 @@ public:
         borref_t el1(PyTuple_GetItem(o, 1));
         if ( el1 != NULL && PyInt_Check(el1.o) )
         {
-          long lns = PyInt_AsLong(el1.o);
+          long lns = IDAPyInt_AsLong(el1.o);
           if ( lns > 0 )
           {
             *important_lines = lns;

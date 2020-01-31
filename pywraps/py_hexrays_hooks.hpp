@@ -73,10 +73,10 @@ class Hexrays_Hooks
         Py_ssize_t bufsize;
         if ( PyString_AsStringAndSize(py_hint.o, &buf, &bufsize) > -1 )
         {
-          rc = PyInt_AsLong(py_rc.o);
+          rc = IDAPyInt_AsLong(py_rc.o);
           qstring tmp(buf, bufsize);
           out_hint->swap(tmp);
-          *out_implines = PyInt_AsLong(py_implines.o);
+          *out_implines = IDAPyInt_AsLong(py_implines.o);
         }
       }
     }

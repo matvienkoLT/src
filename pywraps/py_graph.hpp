@@ -212,7 +212,7 @@ private:
                     "O",
                     py_nodes.o));
     PyW_ShowCbErr(S_ON_CREATING_GROUP);
-    return (py_result == NULL || !PyInt_Check(py_result.o)) ? 1 : PyInt_AsLong(py_result.o);
+    return (py_result == NULL || !PyInt_Check(py_result.o)) ? 1 : IDAPyInt_AsLong(py_result.o);
   }
 
   // a group is being deleted

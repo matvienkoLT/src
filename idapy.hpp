@@ -11,7 +11,7 @@ inline int IDAPyInt_Check(PyObject *obj)
   return PyLong_Check(obj);
 }
 
-inline long IDAPyInt_AsLong(PyObject *io)
+inline long IDAIDAPyInt_AsLong(PyObject *io)
 {
   return PyLong_AsLong(io);
 }
@@ -109,7 +109,7 @@ inline int IDAPyInt_Check(PyObject *obj)
 
 inline long IDAPyInt_AsLong(PyObject *io)
 {
-  return PyInt_AsLong(io);
+  return PyLong_AsLong(io);
 }
 
 inline Py_ssize_t IDAPyInt_AsSsize_t(PyObject *pylong)
@@ -129,7 +129,7 @@ inline int IDAPyIntOrLong_Check(PyObject *obj)
 
 inline long IDAPyIntOrLong_AsLong(PyObject *obj)
 {
-  return PyInt_Check(obj) ? PyInt_AsLong(obj) : PyLong_AsLong(obj);
+  return PyInt_Check(obj) ? IDAPyInt_AsLong(obj) : PyLong_AsLong(obj);
 }
 
 inline int IDAPyStr_Check(PyObject *obj)

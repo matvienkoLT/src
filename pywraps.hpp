@@ -458,6 +458,7 @@ idaman Py_ssize_t ida_export PyW_PyListToStrVec(qstrvec_t *out, PyObject *py_lis
 idaman bool ida_export PyWStringOrNone_Check(PyObject *tp);
 
 //-------------------------------------------------------------------------
+
 #include <idd.hpp>
 idaman PyObject *ida_export meminfo_vec_t_to_py(meminfo_vec_t &ranges);
 
