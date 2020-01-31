@@ -7,11 +7,7 @@ from __future__ import print_function
 # convoluted. Especially since it doesn't do that much. Perhaps a good
 # refactoring is in order?
 
-import sys
-major, minor, micro, _, _ = sys.version_info
-if major < 2 or minor < 7:
-    raise Exception("Expected Python version 2.7.x, but got %s.%s.%s (from %s)" % (major, minor, micro, sys.executable))
-
+import six
 
 from argparse import ArgumentParser
 p = ArgumentParser()
@@ -34,7 +30,7 @@ def warn(msg):
     print("#### WARNING: %s" % msg)
 
 if args.recipe:
-    execfile(args.recipe)
+    exec(open(args.recipe).read())
 else:
     recipe = {}
 
@@ -118,7 +114,7 @@ def add_enum_value(enumval_el, name, enum_name):
         if plist_el is not None:
             for pitem_el in plist_el.findall("./parameteritem"):
                 pname = pitem_el.find(".//parametername").text
-                if pname != "none":
+                if pname != "none" and pname != "...":
                     pdesc = collect_all_text(pitem_el.find(".//parameterdescription/para"))
                     ptype = parse_param_type(pdesc)
                     if ptype is None:
@@ -193,7 +189,7 @@ def gen_methods(out):
             retbody = "return %s;" % rdata["default"]
         arg_strs = []
         for p in (recipe_data["call_params"] if "call_params" in recipe_data else params[1:]):
-            if isinstance(p, basestring):
+            if isinstance(p, six.string_types):
                 assert(p[0] == "@")
                 synth_info = recipe["synthetic_params"][p]
                 ptype = synth_info["type"]
@@ -245,9 +241,13 @@ def gen_notifications(out):
         nosynth_params = []
         for p in params[1:]:
             pname = p["name"]
+            pname = recipe_data.get("params", {}).get(pname, {}).get("rename", pname)
             ptype = p["type"]
             pick_type = ptype
-            if ptype in ["bool", "char", "uchar", "uint16", "cref_t", "dref_t", "cm_t", "ui_notification_t", "dbg_notification_t", "tcc_renderer_type_t", "range_kind_t", "demreq_type_t", "ctree_maturity_t"]:
+            if ptype in ["bool", "char", "uchar", "uint16", "cref_t",
+              "dref_t", "cm_t", "ui_notification_t", "dbg_notification_t",
+              "tcc_renderer_type_t", "range_kind_t", "demreq_type_t",
+              "ctree_maturity_t", "comp_t"]:
                 cast = ptype
                 pick_type = "int"
             else:
@@ -268,7 +268,7 @@ def gen_notifications(out):
         argstr = [] # arguments to pass to the call, minus those explicitly suppressed
         argstr_all = [] # all arguments
         for p in (recipe_data["call_params"] if "call_params" in recipe_data else params[1:]):
-            if isinstance(p, basestring):
+            if isinstance(p, six.string_types):
                 assert(p[0] == "@")
                 synth_info = recipe["synthetic_params"][p]
                 ptype = synth_info["type"]
@@ -284,10 +284,13 @@ def gen_notifications(out):
             clinked = None
             cast_needed = False
             deref = None
+
             if "params" in recipe_data:
                 all_pdata = recipe_data["params"]
                 if pname in all_pdata:
                     pdata = all_pdata[pname]
+                    if "rename" in pdata:
+                        pname = pdata["rename"]
                     if "convertor" in pdata:
                         param_convertor = pdata["convertor"]
                     if "deref" in pdata:
@@ -340,7 +343,7 @@ def gen_notifications(out):
                 ret_convertor_pass_args_nosynth = retdata["convertor_pass_args_nosynth"]
 
         if ret_convertor:
-            out.write("  %s _tmp = proxy->%s(%s);\n" % (
+            out.write("  %s _tmp = %s(%s);\n" % (
                 retdata["type"],
                 ename,
                 ", ".join(argstr)))
@@ -356,7 +359,7 @@ def gen_notifications(out):
                 rstr = ""
             else:
                 rstr = "ret = "
-            out.write("  %sproxy->%s(%s);\n" % (
+            out.write("  %s%s(%s);\n" % (
                 rstr,
                 method_name,
                 ", ".join(argstr)))
@@ -364,8 +367,61 @@ def gen_notifications(out):
         out.write("}\n")
         out.write("break;\n\n")
 
-with open(args.input, "rt") as fin:
-    with open(args.output, "wt") as fout:
+
+def gen_methodsinfo_decl(out):
+    out.write("    static const event_code_to_method_name_t mappings[%d];\n" % len(enumerators))
+    out.write("    static const size_t mappings_size;\n")
+
+def gen_methodsinfo_def(out):
+    out.write("""
+const hooks_base_t::event_code_to_method_name_t %s::mappings[%d] =
+{
+""" % (args.hooks_class, len(enumerators)))
+    for e in enumerators:
+        ename = e["name"]
+        recipe_data = recipe.get(ename, {})
+        method_name = recipe_data.get("method_name", ename)
+        out.write("{ int(%s%s), \"%s\" },\n" % (args.qualifier, e["enum_name"], method_name))
+
+    out.write("""
+};
+const size_t %s::mappings_size = %d;
+""" % (args.hooks_class, len(enumerators)))
+
+def gen_safecall(out, class_name):
+    out.write("""
+  // This hook gets called from the kernel. Ensure we hold the GIL.
+  PYW_GIL_GET;
+  %s *proxy = (%s *) ud;
+  ssize_t ret = 0;
+  try
+  {
+    if ( !proxy->has_fixed_method_set() || proxy->has_nondef[int(code)] > 0 )
+    {
+      if ( proxy->call_requires_new_execution() )
+      {
+        new_execution_t exec;
+        ret = proxy->dispatch(code, va);
+      }
+      else
+      {
+        ret = proxy->dispatch(code, va);
+      }
+    }
+  }
+  catch ( Swig::DirectorException &e )
+  {
+    msg("Exception in %%s dispatcher function: %%s\\n", proxy->class_name, e.getMessage());
+    PYW_GIL_CHECK_LOCKED_SCOPE();
+    if ( PyErr_Occurred() )
+      PyErr_Print();
+  }
+  return ret;
+""" % (class_name, class_name))
+
+
+with open(args.input) as fin:
+    with open(args.output, "w") as fout:
         for line in fin:
             fout.write(line)
             import re
@@ -376,5 +432,11 @@ with open(args.input, "rt") as fin:
                     gen_methods(fout)
                 elif what == "notifications":
                     gen_notifications(fout)
+                elif what == "methodsinfo_decl":
+                    gen_methodsinfo_decl(fout)
+                elif what == "methodsinfo_def":
+                    gen_methodsinfo_def(fout)
+                elif what.startswith("safecall="):
+                    gen_safecall(fout, what[9:])
                 else:
                     raise Exception("Unknown marker type: %s" % what)
