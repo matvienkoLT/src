@@ -340,7 +340,7 @@ public:
           return True
 
       def _acquire_ownership(self, v, acquire):
-          if acquire and (v is not None) and not isinstance(v, ida_idaapi.integer_types):
+          if acquire and (v is not None) and not isinstance(v, (int, long)):
               if not v.thisown:
                   raise Exception("%s is already owned, and cannot be reused" % v)
               v.thisown = False
@@ -430,7 +430,7 @@ public:
   CINSN_MEMBER_REF(goto);
   CINSN_MEMBER_REF(asm);
 
- static bool insn_is_epilog(const cinsn_t *insn) { return insn == INS_EPILOG; }
+  static bool insn_is_epilog(const cinsn_t *insn) { return insn == INS_EPILOG; }
 
   %pythoncode {
     def is_epilog(self):
@@ -547,10 +547,10 @@ public:
 };
 
 // ignore future declarations of at() for these classes
-// %ignore qvector< cinsn_t *>::at(size_t) const;
-// %ignore qvector< cinsn_t *>::at(size_t);
-// %ignore qvector< citem_t *>::at(size_t) const;
-// %ignore qvector< citem_t *>::at(size_t);
+%ignore qvector< cinsn_t *>::at(size_t) const;
+%ignore qvector< cinsn_t *>::at(size_t);
+%ignore qvector< citem_t *>::at(size_t) const;
+%ignore qvector< citem_t *>::at(size_t);
 %ignore qvector< citem_t *>::grow;
 %ignore qvector< cinsn_t *>::grow;
 
@@ -622,7 +622,6 @@ typedef int iterator_word;
 
 /* no support for nested classes in swig means we need to wrap
     this iterator and do some magic...
-
     to use it, call qlist< cinsn_t >::begin() which will return the
     proper iterator type which can then be used to get the current item.
 */
@@ -632,12 +631,9 @@ typedef qlist<cinsn_t>::iterator qlist_cinsn_t_iterator;
 class qlist_cinsn_t_iterator {};
 %extend qlist_cinsn_t_iterator {
     const cinsn_t &cur { return *(*self); }
-    void __next__(void) { (*self)++; }
+    void next(void) { (*self)++; }
     bool operator==(const qlist_cinsn_t_iterator *x) const { return &(self->operator*()) == &(x->operator*()); }
     bool operator!=(const qlist_cinsn_t_iterator *x) const { return &(self->operator*()) != &(x->operator*()); }
-    %pythoncode {
-    next = __next__
-    }
 };
 
 %extend qlist<cinsn_t> {

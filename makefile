@@ -226,6 +226,7 @@ ifdef __NT__                   # os and compiler specific flags
 
 ifeq ($(PYTHON_VERSION_MAJOR),3)
   _SWIGFLAGS += -DPY3=1
+  CC_DEFS += Py_LIMITED_API=0x03040000 # we should make sure we use the same version as SWiG
 endif
 
   CFLAGS += /bigobj $(_SWIGFLAGS) -I$(ST_SDK) /U_DEBUG

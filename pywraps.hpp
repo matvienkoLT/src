@@ -797,7 +797,7 @@ T *view_extract_this(PyObject *self)
   ref_t py_this(PyW_TryGetAttrString(self, S_M_THIS));
   if ( py_this == NULL || !PyCObject_Check(py_this.o) )
     return NULL;
-  return (T*) PyCObject_AsVoidPtr(py_this.o);
+  return (T*) PyCapsule_GetPointer(py_this.o);
 }
 
 //-------------------------------------------------------------------------
